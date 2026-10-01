@@ -1,6 +1,7 @@
 /**
  * Express Server Entry Point
  * Ad Campaign & Lead Management System Backend
+ * Supports both local development standalone server and Vercel serverless functions.
  */
 require("dotenv").config();
 const express = require("express");
@@ -47,10 +48,20 @@ app.get("/api/team-members", (req, res) => {
 app.use(notFound);
 app.use(errorHandler);
 
-// Start Server
-if (process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test") {
-  app.listen(PORT, () => {
+// Start Server locally when executed directly (not when required as a serverless module by Vercel)
+if (require.main === module && !process.env.VERCEL) {
+  const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+  });
+
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(`\n[ERROR] Port ${PORT} is already in use by another running process.`);
+      console.error(`Please stop the process using port ${PORT} or configure a different port.\n`);
+      process.exit(1);
+    } else {
+      throw err;
+    }
   });
 }
 

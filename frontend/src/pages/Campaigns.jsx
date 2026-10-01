@@ -1,53 +1,139 @@
-import React, { useState } from "react";
-import PageHeader from "../components/PageHeader";
-import StatusBadge from "../components/StatusBadge";
-
-// Sample demonstration campaigns data
-const initialCampaigns = [
-  {
-    id: 1,
-    name: "Google Search - Q1 Growth",
-    client: "Acme Enterprise",
-    platform: "Google Ads",
-    budget: "$3,500",
-    leadsCount: 112,
-    status: "Active",
-    startDate: "2026-01-15",
-  },
-  {
-    id: 2,
-    name: "Meta Retargeting Campaign",
-    client: "Starlight E-commerce",
-    platform: "Meta Ads",
-    budget: "$2,000",
-    leadsCount: 84,
-    status: "Active",
-    startDate: "2026-02-01",
-  },
-  {
-    id: 3,
-    name: "LinkedIn B2B Decision Makers",
-    client: "CloudScale SaaS",
-    platform: "LinkedIn",
-    budget: "$5,000",
-    leadsCount: 32,
-    status: "Paused",
-    startDate: "2026-02-10",
-  },
-  {
-    id: 4,
-    name: "Local Service Brand Awareness",
-    client: "Apex Auto Care",
-    platform: "Multi-Channel",
-    budget: "$1,200",
-    leadsCount: 20,
-    status: "Completed",
-    startDate: "2026-01-01",
-  },
-];
+import React, { useState, useEffect, useCallback } from 'react';
+import PageHeader from '../components/PageHeader';
+import StatusBadge from '../components/StatusBadge';
+import CampaignModal from '../components/CampaignModal';
+import DeleteConfirmModal from '../components/DeleteConfirmModal';
+import { getCampaigns, getClients, getLeads, createCampaign, updateCampaign, deleteCampaign } from '../api/api';
 
 export default function Campaigns() {
-  const [showEmptyState, setShowEmptyState] = useState(false);
+  const [campaigns, setCampaigns] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [leads, setLeads] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [feedbackMessage, setFeedbackMessage] = useState(null);
+
+  // Filters State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [clientFilter, setClientFilter] = useState('All');
+  const [platformFilter, setPlatformFilter] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+
+  // Modal State
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [campaignToEdit, setCampaignToEdit] = useState(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [campaignToDelete, setCampaignToDelete] = useState(null);
+
+  // Fetch initial clients and leads reference
+  const loadReferenceData = async () => {
+    try {
+      const [clientsRes, leadsRes] = await Promise.all([
+        getClients(),
+        getLeads()
+      ]);
+      if (clientsRes.success) setClients(clientsRes.data || []);
+      if (leadsRes.success) setLeads(leadsRes.data || []);
+    } catch (err) {
+      console.error('Failed to load reference data:', err);
+    }
+  };
+
+  // Fetch campaigns from backend with query parameters
+  const loadCampaigns = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await getCampaigns({
+        search: searchTerm,
+        clientId: clientFilter,
+        platform: platformFilter,
+        status: statusFilter
+      });
+      if (res.success) {
+        setCampaigns(res.data || []);
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to load campaigns from server');
+    } finally {
+      setLoading(false);
+    }
+  }, [searchTerm, clientFilter, platformFilter, statusFilter]);
+
+  useEffect(() => {
+    loadReferenceData();
+  }, []);
+
+  useEffect(() => {
+    loadCampaigns();
+  }, [loadCampaigns]);
+
+  // Client name lookup helper
+  const getClientName = (clientId) => {
+    const found = clients.find((c) => c.id === clientId);
+    return found ? found.name : 'Unknown Client';
+  };
+
+  // Calculate leads count per campaign
+  const getCampaignLeadsCount = (campaignId) => {
+    return leads.filter((l) => l.campaignId === campaignId).length;
+  };
+
+  // Clear all filters
+  const handleClearFilters = () => {
+    setSearchTerm('');
+    setClientFilter('All');
+    setPlatformFilter('All');
+    setStatusFilter('All');
+  };
+
+  const hasActiveFilters =
+    searchTerm.trim() !== '' ||
+    clientFilter !== 'All' ||
+    platformFilter !== 'All' ||
+    statusFilter !== 'All';
+
+  // Handle Create / Edit Save
+  const handleSaveCampaign = async (campaignData) => {
+    setFeedbackMessage(null);
+    try {
+      if (campaignToEdit) {
+        await updateCampaign(campaignToEdit.id, campaignData);
+        setFeedbackMessage({ type: 'success', text: `Campaign "${campaignData.campaignName}" updated successfully.` });
+      } else {
+        await createCampaign(campaignData);
+        setFeedbackMessage({ type: 'success', text: `Campaign "${campaignData.campaignName}" created successfully.` });
+      }
+      setIsModalOpen(false);
+      setCampaignToEdit(null);
+      await loadCampaigns();
+    } catch (err) {
+      setFeedbackMessage({ type: 'danger', text: err.message || 'Failed to save campaign.' });
+    }
+  };
+
+  // Handle Delete Confirmation
+  const handleDeleteConfirm = async () => {
+    if (!campaignToDelete) return;
+    setFeedbackMessage(null);
+    try {
+      await deleteCampaign(campaignToDelete.id);
+      setFeedbackMessage({
+        type: 'success',
+        text: `Campaign "${campaignToDelete.campaignName || campaignToDelete.name}" deleted successfully.`
+      });
+      setIsDeleteModalOpen(false);
+      setCampaignToDelete(null);
+      await loadCampaigns();
+    } catch (err) {
+      setIsDeleteModalOpen(false);
+      setCampaignToDelete(null);
+      setFeedbackMessage({
+        type: 'danger',
+        text: err.message || 'Could not delete campaign.'
+      });
+    }
+  };
 
   return (
     <div>
@@ -57,9 +143,10 @@ export default function Campaigns() {
         actions={
           <button
             className="btn btn-primary"
-            onClick={() =>
-              alert("Add Campaign modal / form will be connected in Step 2.")
-            }
+            onClick={() => {
+              setCampaignToEdit(null);
+              setIsModalOpen(true);
+            }}
           >
             <svg
               width="16"
@@ -79,26 +166,38 @@ export default function Campaigns() {
         }
       />
 
-      {/* Demo helper banner to inspect table or empty placeholder state */}
-      <div className="demo-toggle-banner">
-        <span>
-          <strong>Step 1 Preview:</strong> Switch between preview table and
-          empty state placeholder.
-        </span>
-        <button
-          className="btn btn-secondary btn-sm"
-          onClick={() => setShowEmptyState(!showEmptyState)}
-        >
-          {showEmptyState ? "Show Campaign Table" : "Preview Empty State"}
-        </button>
-      </div>
+      {/* Feedback Banner */}
+      {feedbackMessage && (
+        <div className={`alert-banner alert-${feedbackMessage.type}`} style={{ marginBottom: '1.25rem' }}>
+          <span>{feedbackMessage.text}</span>
+          <button
+            onClick={() => setFeedbackMessage(null)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: 'inherit' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
-      {showEmptyState ? (
-        <div className="empty-state">
-          <div className="empty-state-icon">
+      {/* Server Error Banner */}
+      {error && (
+        <div className="alert-banner alert-danger" style={{ marginBottom: '1.25rem' }}>
+          <span>{error}</span>
+          <button className="btn btn-secondary btn-sm" onClick={loadCampaigns} style={{ marginLeft: 'auto' }}>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Search & Filter Toolbar */}
+      <div className="filters-card">
+        <div className="filters-grid">
+          {/* Search Input */}
+          <div className="search-input-wrapper">
             <svg
-              width="24"
-              height="24"
+              className="search-icon"
+              width="18"
+              height="18"
               viewBox="0 0 24 24"
               fill="none"
               stroke="currentColor"
@@ -106,70 +205,216 @@ export default function Campaigns() {
               strokeLinecap="round"
               strokeLinejoin="round"
             >
-              <path d="m3 11 18-5v12L3 14v-3z" />
-              <path d="M11.6 16.8a3 3 0 1 1-5.8-1.6" />
+              <circle cx="11" cy="11" r="8"></circle>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+            </svg>
+            <input
+              type="text"
+              className="form-control search-input"
+              placeholder="Search by campaign name, platform, client..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+          </div>
+
+          {/* Client Filter */}
+          <div className="filter-group">
+            <select
+              className="form-control"
+              value={clientFilter}
+              onChange={(e) => setClientFilter(e.target.value)}
+            >
+              <option value="All">All Clients</option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Platform Filter */}
+          <div className="filter-group">
+            <select
+              className="form-control"
+              value={platformFilter}
+              onChange={(e) => setPlatformFilter(e.target.value)}
+            >
+              <option value="All">All Platforms</option>
+              <option value="Google Ads">Google Ads</option>
+              <option value="Facebook">Facebook</option>
+              <option value="Instagram">Instagram</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+
+          {/* Status Filter */}
+          <div className="filter-group">
+            <select
+              className="form-control"
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="All">All Statuses</option>
+              <option value="Active">Active</option>
+              <option value="Paused">Paused</option>
+              <option value="Completed">Completed</option>
+            </select>
+          </div>
+
+          {/* Clear Filters Button */}
+          {hasActiveFilters && (
+            <div className="filter-group">
+              <button className="btn btn-secondary btn-sm" onClick={handleClearFilters}>
+                Clear Filters
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Results Count */}
+        <div className="filters-meta">
+          <span className="results-count">
+            Showing <strong>{campaigns.length}</strong> {campaigns.length === 1 ? 'campaign' : 'campaigns'}
+            {hasActiveFilters && ' (filtered)'}
+          </span>
+        </div>
+      </div>
+
+      {/* Campaigns Table or Empty State */}
+      {loading ? (
+        <div className="card" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+          <div className="spinner" style={{ margin: '0 auto 1rem' }}></div>
+          Loading campaigns from server...
+        </div>
+      ) : campaigns.length === 0 ? (
+        <div className="card empty-state">
+          <div className="empty-state-icon">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+              <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
             </svg>
           </div>
           <h3 className="empty-state-title">No campaigns found</h3>
-          <p className="empty-state-desc">
-            Get started by creating your first ad campaign to track leads,
-            platforms, and performance.
+          <p className="empty-state-text">
+            {hasActiveFilters
+              ? 'Try adjusting your search terms or filter criteria to find what you are looking for.'
+              : 'Get started by creating your first ad campaign.'}
           </p>
-          <button
-            className="btn btn-primary"
-            onClick={() => setShowEmptyState(false)}
-          >
-            <span>Create First Campaign</span>
-          </button>
+          {hasActiveFilters ? (
+            <button className="btn btn-secondary" onClick={handleClearFilters}>
+              Reset Filters
+            </button>
+          ) : (
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                setCampaignToEdit(null);
+                setIsModalOpen(true);
+              }}
+            >
+              Create Campaign
+            </button>
+          )}
         </div>
       ) : (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">All Campaigns</h2>
-              <span className="card-subtitle">
-                List of advertising campaigns and lead volumes
-              </span>
-            </div>
-          </div>
-          <div className="table-responsive">
-            <table className="custom-table">
-              <thead>
-                <tr>
-                  <th>Campaign Name</th>
-                  <th>Client</th>
-                  <th>Platform</th>
-                  <th>Budget</th>
-                  <th>Leads Generated</th>
-                  <th>Status</th>
-                  <th>Start Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {initialCampaigns.map((camp) => (
-                  <tr key={camp.id}>
-                    <td className="table-cell-bold">{camp.name}</td>
-                    <td>{camp.client}</td>
-                    <td>
-                      <span
-                        style={{ fontWeight: 500, color: "var(--text-muted)" }}
+        <div className="card table-container">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Campaign & Client</th>
+                <th>Platform</th>
+                <th>Budget</th>
+                <th>Leads</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {campaigns.map((camp) => (
+                <tr key={camp.id}>
+                  <td>
+                    <div className="table-item-title">{camp.campaignName || camp.name}</div>
+                    <div className="table-item-subtitle">{getClientName(camp.clientId)}</div>
+                  </td>
+                  <td>
+                    <span className="platform-tag">{camp.platform}</span>
+                  </td>
+                  <td>
+                    <strong>₹{Number(camp.budget || 0).toLocaleString('en-IN')}</strong>
+                  </td>
+                  <td>
+                    <span className="leads-badge">{getCampaignLeadsCount(camp.id)} leads</span>
+                  </td>
+                  <td>
+                    <StatusBadge status={camp.status} />
+                  </td>
+                  <td>
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {camp.startDate || '—'} {camp.endDate ? `to ${camp.endDate}` : ''}
+                    </div>
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div className="table-actions-group">
+                      <button
+                        className="btn btn-icon btn-sm"
+                        title="Edit Campaign"
+                        onClick={() => {
+                          setCampaignToEdit(camp);
+                          setIsModalOpen(true);
+                        }}
                       >
-                        {camp.platform}
-                      </span>
-                    </td>
-                    <td className="table-cell-bold">{camp.budget}</td>
-                    <td>{camp.leadsCount} leads</td>
-                    <td>
-                      <StatusBadge status={camp.status} />
-                    </td>
-                    <td className="table-cell-sub">{camp.startDate}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                        </svg>
+                      </button>
+                      <button
+                        className="btn btn-icon btn-sm btn-icon-danger"
+                        title="Delete Campaign"
+                        onClick={() => {
+                          setCampaignToDelete(camp);
+                          setIsDeleteModalOpen(true);
+                        }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+
+      {/* Campaign Create/Edit Modal */}
+      <CampaignModal
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false);
+          setCampaignToEdit(null);
+        }}
+        onSave={handleSaveCampaign}
+        campaignToEdit={campaignToEdit}
+        clients={clients}
+      />
+
+      {/* Delete Campaign Confirmation Modal */}
+      <DeleteConfirmModal
+        isOpen={isDeleteModalOpen}
+        onClose={() => {
+          setIsDeleteModalOpen(false);
+          setCampaignToDelete(null);
+        }}
+        onConfirm={handleDeleteConfirm}
+        campaign={campaignToDelete}
+        clientName={campaignToDelete ? getClientName(campaignToDelete.clientId) : ''}
+      />
     </div>
   );
 }
